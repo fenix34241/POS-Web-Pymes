@@ -64,6 +64,26 @@ function initializeDatabase() {
       subtotal REAL NOT NULL
     );
 
+    -- Refunds / Returns
+    CREATE TABLE IF NOT EXISTS sale_refunds (
+      id TEXT PRIMARY KEY,
+      sale_id TEXT NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+      date DATETIME NOT NULL,
+      total REAL NOT NULL,
+      reason TEXT DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS sale_refund_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      refund_id TEXT NOT NULL REFERENCES sale_refunds(id) ON DELETE CASCADE,
+      sale_item_id INTEGER NOT NULL REFERENCES sale_items(id) ON DELETE CASCADE,
+      product_id TEXT NOT NULL REFERENCES products(id),
+      product_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      price REAL NOT NULL,
+      subtotal REAL NOT NULL
+    );
+
     -- Suppliers
     CREATE TABLE IF NOT EXISTS suppliers (
       id TEXT PRIMARY KEY,

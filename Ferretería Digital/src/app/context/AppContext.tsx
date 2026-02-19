@@ -41,6 +41,7 @@ interface AppContextType {
     total: number;
     paymentMethod: string;
   }) => Promise<void>;
+  createRefund: (saleId: string, data: { reason?: string; items: Array<{ saleItemId: number; quantity: number }> }) => Promise<void>;
 
   // Purchases & Suppliers
   addPurchase: (purchase: {
@@ -216,6 +217,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setMovements(updatedMovements);
   }, []);
 
+  const createRefund = useCallback(async (saleId: string, data: { reason?: string; items: Array<{ saleItemId: number; quantity: number }> }) => {
+    await saleApi.createRefund(saleId, data);
+    const [updatedSales, updatedProducts, updatedMovements] = await Promise.all([
+      saleApi.getAll(),
+      productApi.getAll(),
+      movementApi.getAll(),
+    ]);
+    setSales(updatedSales);
+    setProducts(updatedProducts);
+    setMovements(updatedMovements);
+  }, []);
+
   // ─── Purchases ───────────────────────────────────────────
   const addPurchase = useCallback(async (purchaseData: {
     supplierId: string;
@@ -284,6 +297,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteProduct,
         deleteImage,
         addSale,
+        createRefund,
         addPurchase,
         addSupplier,
         deleteSupplier,

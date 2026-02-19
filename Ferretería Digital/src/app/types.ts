@@ -21,11 +21,31 @@ export interface User {
 }
 
 export interface SaleItem {
+  id?: number;
   productId: string;
   productName: string;
   quantity: number;
   price: number;
   subtotal: number;
+  refundedQuantity?: number;
+}
+
+export interface RefundItem {
+  saleItemId: number;
+  productId: string;
+  productName: string;
+  quantity: number;
+  price: number;
+  subtotal: number;
+}
+
+export interface SaleRefund {
+  id: string;
+  saleId: string;
+  date: Date;
+  total: number;
+  reason: string;
+  items: RefundItem[];
 }
 
 export interface Sale {

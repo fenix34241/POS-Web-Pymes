@@ -92,6 +92,19 @@ export const POS: React.FC = () => {
     ));
   };
 
+  const updatePrice = (productId: string, newPrice: number) => {
+    if (!Number.isFinite(newPrice) || newPrice <= 0) {
+      toast.error('El precio debe ser mayor que 0');
+      return;
+    }
+
+    setCart(cart.map(item =>
+      item.productId === productId
+        ? { ...item, price: newPrice, subtotal: newPrice * item.quantity }
+        : item
+    ));
+  };
+
   const removeFromCart = (productId: string) => {
     setCart(cart.filter(item => item.productId !== productId));
   };
@@ -222,7 +235,18 @@ export const POS: React.FC = () => {
                 <div key={item.productId} className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm truncate">{item.productName}</p>
-                    <p className="text-sm text-gray-600">S/ {item.price.toFixed(2)}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-gray-600">Precio:</span>
+                      <Input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={item.price}
+                        onChange={(e) => updatePrice(item.productId, Number(e.target.value))}
+                        className="h-7 text-sm"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-600 mt-1">Subtotal: S/ {item.subtotal.toFixed(2)}</p>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button

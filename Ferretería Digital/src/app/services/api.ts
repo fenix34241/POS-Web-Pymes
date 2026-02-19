@@ -1,4 +1,4 @@
-import { Product, Sale, Purchase, Supplier, InventoryMovement, User } from '../types';
+import { Product, Sale, SaleRefund, Purchase, Supplier, InventoryMovement, User } from '../types';
 
 const API_BASE = '/api';
 
@@ -90,6 +90,21 @@ export const saleApi = {
         paymentMethod: string;
     }) =>
         request<Sale>('/sales', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        }),
+
+    getRefunds: (saleId: string) =>
+        request<SaleRefund[]>(`/sales/${saleId}/refunds`),
+
+    createRefund: (
+        saleId: string,
+        data: {
+            reason?: string;
+            items: Array<{ saleItemId: number; quantity: number }>;
+        }
+    ) =>
+        request<SaleRefund>(`/sales/${saleId}/refunds`, {
             method: 'POST',
             body: JSON.stringify(data),
         }),
