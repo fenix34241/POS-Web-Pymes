@@ -1,0 +1,27 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - api
+
+  api:
+    build: ./server
+    ports:
+      - "3001:3001"
+    volumes:
+      - sqlite-data:/app/data
+      - uploads-data:/app/uploads
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+
+volumes:
+  sqlite-data:
+  uploads-data:
