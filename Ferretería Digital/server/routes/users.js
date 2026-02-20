@@ -66,10 +66,19 @@ router.post('/', (req, res) => {
 // DELETE /api/users/:id — Delete user
 router.delete('/:id', (req, res) => {
     try {
-        const result = db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-        if (result.changes === 0) {
+        const targetUser = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+        if (!targetUser) {
             return res.status(404).json({ error: 'User not found' });
         }
+
+        if (targetUser.role === 'admin') {
+            const adminCount = db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get();
+            if (adminCount.count <= 1) {
+                return res.status(409).json({ error: 'Cannot delete the last admin user' });
+            }
+        }
+
+        db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
         res.json({ success: true });
     } catch (error) {
         console.error('Delete user error:', error);

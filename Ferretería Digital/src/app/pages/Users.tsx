@@ -71,12 +71,22 @@ export const Users: React.FC = () => {
   const handleDelete = async (userId: string) => {
     const user = users.find(u => u.id === userId);
 
-    if (user?.role === 'admin') {
-      toast.error('No puedes eliminar un usuario administrador');
+    if (!user) {
+      toast.error('Usuario no encontrado');
       return;
     }
 
-    if (confirm(`¿Estás seguro de eliminar al usuario ${user?.name}?`)) {
+    if (user.id === currentUser?.id) {
+      toast.error('No puedes eliminar tu propio usuario');
+      return;
+    }
+
+    const isAdmin = user.role === 'admin';
+    const confirmation = isAdmin
+      ? `¿Estás seguro de eliminar al administrador ${user.name}?`
+      : `¿Estás seguro de eliminar al usuario ${user.name}?`;
+
+    if (confirm(confirmation)) {
       try {
         await deleteUser(userId);
         toast.success('Usuario eliminado');
@@ -234,7 +244,7 @@ export const Users: React.FC = () => {
                   </td>
                   <td className="p-4">
                     <div className="flex items-center justify-center">
-                      {user.role !== 'admin' && (
+                      {user.id !== currentUser?.id && (
                         <Button
                           size="sm"
                           variant="ghost"
