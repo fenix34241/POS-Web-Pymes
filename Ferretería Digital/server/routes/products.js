@@ -5,18 +5,19 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../database');
+const { toNonEmptyString, toOptionalString, toNonNegativeNumber } = require('../utils/validators');
 
 // ─── Multer Configuration ─────────────────────────────────
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
+const PRODUCTS_UPLOAD_DIR = path.resolve(__dirname, '..', 'uploads', 'products');
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = path.join(__dirname, '..', 'uploads', 'products');
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+        if (!fs.existsSync(PRODUCTS_UPLOAD_DIR)) {
+            fs.mkdirSync(PRODUCTS_UPLOAD_DIR, { recursive: true });
         }
-        cb(null, dir);
+        cb(null, PRODUCTS_UPLOAD_DIR);
     },
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
@@ -36,10 +37,34 @@ const upload = multer({
     },
 });
 
+function parseProductPayload(payload) {
+    const name = toNonEmptyString(payload.name);
+    const barcode = toOptionalString(payload.barcode);
+    const price = toNonNegativeNumber(payload.price);
+    const cost = toNonNegativeNumber(payload.cost);
+    const stock = toNonNegativeNumber(payload.stock);
+    const minStock = toNonNegativeNumber(payload.minStock);
+    const category = toOptionalString(payload.category);
+    const brand = toOptionalString(payload.brand);
+
+    if (!name || price === null || cost === null || stock === null || minStock === null) {
+        return null;
+    }
+
+    return { name, barcode, price, cost, stock, minStock, category, brand };
+}
+
 // Helper to delete an image file from disk
 function deleteImageFile(imagePath) {
     if (!imagePath) return;
-    const fullPath = path.join(__dirname, '..', imagePath);
+
+    const relativePath = imagePath.replace(/^\/+/, '');
+    const fullPath = path.resolve(__dirname, '..', relativePath);
+    if (!fullPath.startsWith(PRODUCTS_UPLOAD_DIR)) {
+        console.warn('Blocked attempt to delete file outside uploads/products:', imagePath);
+        return;
+    }
+
     if (fs.existsSync(fullPath)) {
         try {
             fs.unlinkSync(fullPath);
@@ -90,7 +115,12 @@ router.post('/', (req, res) => {
         }
 
         try {
-            const { name, barcode, price, cost, stock, minStock, category, brand } = req.body;
+            const parsed = parseProductPayload(req.body);
+            if (!parsed) {
+                if (req.file) deleteImageFile(`uploads/products/${req.file.filename}`);
+                return res.status(400).json({ error: 'Datos de producto inválidos' });
+            }
+
             const id = uuidv4();
             const imagePath = req.file ? `uploads/products/${req.file.filename}` : null;
 
@@ -98,21 +128,18 @@ router.post('/', (req, res) => {
                 INSERT INTO products (id, name, barcode, price, cost, stock, min_stock, category, brand, image)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
-                id, name, barcode || null,
-                Number(price) || 0, Number(cost) || 0,
-                Number(stock) || 0, Number(minStock) || 0,
-                category || '', brand || '', imagePath
+                id, parsed.name, parsed.barcode || null,
+                parsed.price, parsed.cost,
+                parsed.stock, parsed.minStock,
+                parsed.category, parsed.brand, imagePath
             );
 
             res.status(201).json({
-                id, name, barcode: barcode || '',
-                price: Number(price) || 0, cost: Number(cost) || 0,
-                stock: Number(stock) || 0, minStock: Number(minStock) || 0,
-                category: category || '', brand: brand || '',
+                id,
+                ...parsed,
                 image: imagePath || '',
             });
         } catch (error) {
-            // Clean up uploaded file on DB error
             if (req.file) deleteImageFile(`uploads/products/${req.file.filename}`);
             console.error('Create product error:', error);
             res.status(500).json({ error: 'Internal server error' });
@@ -134,22 +161,25 @@ router.put('/:id', (req, res) => {
         }
 
         try {
-            const { name, barcode, price, cost, stock, minStock, category, brand, removeImage } = req.body;
+            const parsed = parseProductPayload(req.body);
+            if (!parsed) {
+                if (req.file) deleteImageFile(`uploads/products/${req.file.filename}`);
+                return res.status(400).json({ error: 'Datos de producto inválidos' });
+            }
 
+            const { removeImage } = req.body;
             const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(req.params.id);
             if (!existing) {
                 if (req.file) deleteImageFile(`uploads/products/${req.file.filename}`);
                 return res.status(404).json({ error: 'Product not found' });
             }
 
-            let imagePath = existing.image; // keep existing by default
+            let imagePath = existing.image;
 
             if (req.file) {
-                // New file uploaded → delete old one, use new path
                 deleteImageFile(existing.image);
                 imagePath = `uploads/products/${req.file.filename}`;
             } else if (removeImage === 'true') {
-                // Explicitly remove image
                 deleteImageFile(existing.image);
                 imagePath = null;
             }
@@ -158,18 +188,16 @@ router.put('/:id', (req, res) => {
                 UPDATE products SET name = ?, barcode = ?, price = ?, cost = ?, stock = ?, min_stock = ?, category = ?, brand = ?, image = ?
                 WHERE id = ?
             `).run(
-                name, barcode || null,
-                Number(price) || 0, Number(cost) || 0,
-                Number(stock) || 0, Number(minStock) || 0,
-                category || '', brand || '',
+                parsed.name, parsed.barcode || null,
+                parsed.price, parsed.cost,
+                parsed.stock, parsed.minStock,
+                parsed.category, parsed.brand,
                 imagePath, req.params.id
             );
 
             res.json({
-                id: req.params.id, name, barcode: barcode || '',
-                price: Number(price) || 0, cost: Number(cost) || 0,
-                stock: Number(stock) || 0, minStock: Number(minStock) || 0,
-                category: category || '', brand: brand || '',
+                id: req.params.id,
+                ...parsed,
                 image: imagePath || '',
             });
         } catch (error) {
@@ -183,8 +211,16 @@ router.put('/:id', (req, res) => {
 // ─── PATCH /api/products/:id/stock — Update stock only ────
 router.patch('/:id/stock', (req, res) => {
     try {
-        const { stock } = req.body;
-        db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(stock, req.params.id);
+        const stock = toNonNegativeNumber(req.body.stock);
+        if (stock === null) {
+            return res.status(400).json({ error: 'Stock inválido' });
+        }
+
+        const result = db.prepare('UPDATE products SET stock = ? WHERE id = ?').run(stock, req.params.id);
+        if (result.changes === 0) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
+
         res.json({ success: true });
     } catch (error) {
         console.error('Update stock error:', error);
@@ -200,7 +236,6 @@ router.delete('/:id', (req, res) => {
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Product not found' });
         }
-        // Delete associated image file
         if (existing) deleteImageFile(existing.image);
         res.json({ success: true });
     } catch (error) {
