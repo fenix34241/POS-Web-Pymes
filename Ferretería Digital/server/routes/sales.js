@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../database');
+const { toNonNegativeNumber, toPositiveInteger, toNonEmptyString } = require('../utils/validators');
 
 const mapSaleItem = (item) => ({
     id: item.id,
@@ -16,34 +17,42 @@ const mapSaleItem = (item) => ({
 router.get('/', (req, res) => {
     try {
         const sales = db.prepare('SELECT * FROM sales ORDER BY date DESC').all();
-        const getItems = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?');
-        const getRefundedQtyBySaleItem = db.prepare(`
-      SELECT sale_item_id, COALESCE(SUM(quantity), 0) AS refunded_quantity
-      FROM sale_refund_items
-      WHERE sale_item_id IN (
-        SELECT id FROM sale_items WHERE sale_id = ?
-      )
-      GROUP BY sale_item_id
-    `);
+        const saleIds = sales.map((sale) => sale.id);
 
-        const result = sales.map(sale => {
-            const items = getItems.all(sale.id);
-            const refundedRows = getRefundedQtyBySaleItem.all(sale.id);
-            const refundedByItem = Object.fromEntries(refundedRows.map(row => [row.sale_item_id, row.refunded_quantity]));
+        const saleItems = saleIds.length
+            ? db.prepare(`SELECT * FROM sale_items WHERE sale_id IN (${saleIds.map(() => '?').join(',')})`).all(...saleIds)
+            : [];
+        const refundedRows = saleIds.length
+            ? db.prepare(`
+                SELECT sri.sale_item_id, COALESCE(SUM(sri.quantity), 0) AS refunded_quantity
+                FROM sale_refund_items sri
+                INNER JOIN sale_items si ON si.id = sri.sale_item_id
+                WHERE si.sale_id IN (${saleIds.map(() => '?').join(',')})
+                GROUP BY sri.sale_item_id
+            `).all(...saleIds)
+            : [];
 
-            return {
-                id: sale.id,
-                date: sale.date,
-                subtotal: sale.subtotal,
-                discount: sale.discount,
-                total: sale.total,
-                paymentMethod: sale.payment_method,
-                items: items.map(item => ({
-                    ...mapSaleItem(item),
-                    refundedQuantity: refundedByItem[item.id] || 0
-                }))
-            };
-        });
+        const itemsBySale = new Map();
+        for (const item of saleItems) {
+            const current = itemsBySale.get(item.sale_id) || [];
+            current.push(item);
+            itemsBySale.set(item.sale_id, current);
+        }
+
+        const refundedByItem = Object.fromEntries(refundedRows.map((row) => [row.sale_item_id, row.refunded_quantity]));
+
+        const result = sales.map(sale => ({
+            id: sale.id,
+            date: sale.date,
+            subtotal: sale.subtotal,
+            discount: sale.discount,
+            total: sale.total,
+            paymentMethod: sale.payment_method,
+            items: (itemsBySale.get(sale.id) || []).map(item => ({
+                ...mapSaleItem(item),
+                refundedQuantity: refundedByItem[item.id] || 0
+            }))
+        }));
 
         res.json(result);
     } catch (error) {
@@ -92,6 +101,43 @@ router.get('/:id/refunds', (req, res) => {
 router.post('/', (req, res) => {
     try {
         const { items, subtotal, discount, total, paymentMethod } = req.body;
+
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ error: 'Debe incluir al menos un producto en la venta' });
+        }
+
+        const parsedSubtotal = toNonNegativeNumber(subtotal);
+        const parsedDiscount = toNonNegativeNumber(discount || 0);
+        const parsedTotal = toNonNegativeNumber(total);
+        const parsedPaymentMethod = toNonEmptyString(paymentMethod);
+
+        if (parsedSubtotal === null || parsedDiscount === null || parsedTotal === null || !parsedPaymentMethod) {
+            return res.status(400).json({ error: 'Totales o método de pago inválidos' });
+        }
+
+        const normalizedItems = [];
+        for (const item of items) {
+            const quantity = toPositiveInteger(item.quantity);
+            const price = toNonNegativeNumber(item.price);
+            const itemSubtotal = toNonNegativeNumber(item.subtotal);
+            const productId = toNonEmptyString(item.productId);
+            const productName = toNonEmptyString(item.productName);
+
+            if (!quantity || price === null || itemSubtotal === null || !productId || !productName) {
+                return res.status(400).json({ error: 'Items de venta inválidos' });
+            }
+
+            const product = db.prepare('SELECT id, stock FROM products WHERE id = ?').get(productId);
+            if (!product) {
+                return res.status(400).json({ error: `Producto no encontrado: ${productId}` });
+            }
+            if (product.stock < quantity) {
+                return res.status(409).json({ error: `Stock insuficiente para el producto ${productName}` });
+            }
+
+            normalizedItems.push({ productId, productName, quantity, price, subtotal: itemSubtotal });
+        }
+
         const id = uuidv4();
         const date = new Date().toISOString();
 
@@ -112,11 +158,10 @@ router.post('/', (req, res) => {
       VALUES (?, ?, ?, ?, 'exit', ?, 'Venta', ?)
     `);
 
-        // Transaction: sale + items + stock updates + movements
         const createSale = db.transaction(() => {
-            insertSale.run(id, date, subtotal, discount || 0, total, paymentMethod);
+            insertSale.run(id, date, parsedSubtotal, parsedDiscount, parsedTotal, parsedPaymentMethod);
 
-            for (const item of items) {
+            for (const item of normalizedItems) {
                 insertItem.run(id, item.productId, item.productName, item.quantity, item.price, item.subtotal);
                 updateStock.run(item.quantity, item.productId);
                 insertMovement.run(uuidv4(), date, item.productId, item.productName, item.quantity, id);
@@ -128,17 +173,11 @@ router.post('/', (req, res) => {
         res.status(201).json({
             id,
             date,
-            items: items.map(i => ({
-                productId: i.productId,
-                productName: i.productName,
-                quantity: i.quantity,
-                price: i.price,
-                subtotal: i.subtotal
-            })),
-            subtotal,
-            discount: discount || 0,
-            total,
-            paymentMethod
+            items: normalizedItems,
+            subtotal: parsedSubtotal,
+            discount: parsedDiscount,
+            total: parsedTotal,
+            paymentMethod: parsedPaymentMethod
         });
     } catch (error) {
         console.error('Create sale error:', error);

@@ -8,6 +8,7 @@ import { Inventory } from './pages/Inventory';
 import { Purchases } from './pages/Purchases';
 import { Reports } from './pages/Reports';
 import { Users } from './pages/Users';
+import { Returns } from './pages/Returns';
 
 export const router = createBrowserRouter([
   {
@@ -41,6 +42,10 @@ export const router = createBrowserRouter([
       {
         path: 'reports',
         Component: Reports,
+      },
+      {
+        path: 'returns',
+        Component: Returns,
       },
       {
         path: 'users',

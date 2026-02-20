@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 
 const DB_PATH = path.join(__dirname, 'data', 'ferreteria.db');
 
@@ -130,12 +131,18 @@ function initializeDatabase() {
     // Seed default admin user if no users exist
     const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
     if (userCount.count === 0) {
-        const hashedPassword = bcrypt.hashSync('Aldsv2833', 10);
+        const generatedPassword = crypto.randomBytes(12).toString('base64url');
+        const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || generatedPassword;
+        const hashedPassword = bcrypt.hashSync(adminPassword, 12);
         db.prepare(`
       INSERT INTO users (id, username, password_hash, name, role)
       VALUES (?, ?, ?, ?, ?)
     `).run(uuidv4(), 'Aldy', hashedPassword, 'Aldy', 'admin');
         console.log('✅ Default admin user created (username: Aldy)');
+        if (!process.env.DEFAULT_ADMIN_PASSWORD) {
+            console.log(`🔐 Generated admin password: ${adminPassword}`);
+            console.log('⚠️ Set DEFAULT_ADMIN_PASSWORD to avoid random bootstrap credentials.');
+        }
     }
 }
 

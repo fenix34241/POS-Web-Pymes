@@ -9,7 +9,8 @@ import {
   LogOut,
   Menu,
   X,
-  Users
+  Users,
+  Undo2
 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { Button } from './ui/button';
@@ -30,6 +31,7 @@ export const Layout: React.FC = () => {
     { path: '/pos', icon: ShoppingCart, label: 'Punto de Venta' },
     { path: '/inventory', icon: Package, label: 'Inventario' },
     { path: '/purchases', icon: ShoppingBag, label: 'Compras' },
+    { path: '/returns', icon: Undo2, label: 'Devoluciones' },
     { path: '/reports', icon: BarChart3, label: 'Reportes' },
   ];
 
