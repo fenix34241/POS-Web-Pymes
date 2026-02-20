@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { db } = require('../database');
+const { toNonEmptyString, toOptionalString, toNonNegativeNumber, toPositiveInteger } = require('../utils/validators');
 
 // ─── SUPPLIERS ───────────────────────────────────────────
 
@@ -19,15 +20,23 @@ router.get('/suppliers', (req, res) => {
 // POST /api/purchases/suppliers — Create supplier
 router.post('/suppliers', (req, res) => {
     try {
-        const { name, contact, email, phone, address } = req.body;
+        const name = toNonEmptyString(req.body.name);
+        if (!name) {
+            return res.status(400).json({ error: 'El nombre del proveedor es obligatorio' });
+        }
+
         const id = uuidv4();
+        const contact = toOptionalString(req.body.contact);
+        const email = toOptionalString(req.body.email);
+        const phone = toOptionalString(req.body.phone);
+        const address = toOptionalString(req.body.address);
 
         db.prepare(`
       INSERT INTO suppliers (id, name, contact, email, phone, address)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, name, contact || '', email || null, phone || null, address || null);
+    `).run(id, name, contact, email || null, phone || null, address || null);
 
-        res.status(201).json({ id, name, contact: contact || '', email, phone, address });
+        res.status(201).json({ id, name, contact, email, phone, address });
     } catch (error) {
         console.error('Create supplier error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -54,7 +63,17 @@ router.delete('/suppliers/:id', (req, res) => {
 router.get('/', (req, res) => {
     try {
         const purchases = db.prepare('SELECT * FROM purchases ORDER BY date DESC').all();
-        const getItems = db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ?');
+        const purchaseIds = purchases.map((purchase) => purchase.id);
+        const purchaseItems = purchaseIds.length
+            ? db.prepare(`SELECT * FROM purchase_items WHERE purchase_id IN (${purchaseIds.map(() => '?').join(',')})`).all(...purchaseIds)
+            : [];
+
+        const itemsByPurchase = new Map();
+        for (const item of purchaseItems) {
+            const current = itemsByPurchase.get(item.purchase_id) || [];
+            current.push(item);
+            itemsByPurchase.set(item.purchase_id, current);
+        }
 
         const result = purchases.map(purchase => ({
             id: purchase.id,
@@ -63,7 +82,7 @@ router.get('/', (req, res) => {
             supplierName: purchase.supplier_name,
             total: purchase.total,
             invoiceNumber: purchase.invoice_number,
-            items: getItems.all(purchase.id).map(item => ({
+            items: (itemsByPurchase.get(purchase.id) || []).map(item => ({
                 productId: item.product_id,
                 productName: item.product_name,
                 quantity: item.quantity,
@@ -82,7 +101,35 @@ router.get('/', (req, res) => {
 // POST /api/purchases — Create purchase (with items, updates stock, creates movements)
 router.post('/', (req, res) => {
     try {
-        const { supplierId, supplierName, items, total, invoiceNumber } = req.body;
+        const supplierId = toNonEmptyString(req.body.supplierId);
+        const supplierName = toNonEmptyString(req.body.supplierName);
+        const total = toNonNegativeNumber(req.body.total);
+        const invoiceNumber = toOptionalString(req.body.invoiceNumber);
+        const { items } = req.body;
+
+        if (!supplierId || !supplierName || total === null) {
+            return res.status(400).json({ error: 'Datos de compra inválidos' });
+        }
+
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ error: 'Debe incluir al menos un producto en la compra' });
+        }
+
+        const normalizedItems = [];
+        for (const item of items) {
+            const quantity = toPositiveInteger(item.quantity);
+            const cost = toNonNegativeNumber(item.cost);
+            const subtotal = toNonNegativeNumber(item.subtotal);
+            const productId = toNonEmptyString(item.productId);
+            const productName = toNonEmptyString(item.productName);
+
+            if (!quantity || cost === null || subtotal === null || !productId || !productName) {
+                return res.status(400).json({ error: 'Items de compra inválidos' });
+            }
+
+            normalizedItems.push({ productId, productName, quantity, cost, subtotal });
+        }
+
         const id = uuidv4();
         const date = new Date().toISOString();
 
@@ -106,7 +153,7 @@ router.post('/', (req, res) => {
         const createPurchase = db.transaction(() => {
             insertPurchase.run(id, date, supplierId, supplierName, total, invoiceNumber || null);
 
-            for (const item of items) {
+            for (const item of normalizedItems) {
                 insertItem.run(id, item.productId, item.productName, item.quantity, item.cost, item.subtotal);
                 updateStock.run(item.quantity, item.productId);
                 insertMovement.run(uuidv4(), date, item.productId, item.productName, item.quantity, id);
@@ -116,15 +163,13 @@ router.post('/', (req, res) => {
         createPurchase();
 
         res.status(201).json({
-            id, date, supplierId, supplierName, total,
+            id,
+            date,
+            supplierId,
+            supplierName,
+            total,
             invoiceNumber: invoiceNumber || null,
-            items: items.map(i => ({
-                productId: i.productId,
-                productName: i.productName,
-                quantity: i.quantity,
-                cost: i.cost,
-                subtotal: i.subtotal
-            }))
+            items: normalizedItems
         });
     } catch (error) {
         console.error('Create purchase error:', error);
